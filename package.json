@@ -60,6 +60,7 @@
     "sass": "^1.69.5",
     "storybook": "^10.2.13",
     "superagent": "^10.2.0",
+    "tsx": "^4.23.12",
     "typescript": "~5.3.3",
     "vite-plugin-pwa": "^1.2.0",
     "vite-require": "^0.2.3",
