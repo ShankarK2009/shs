@@ -80,8 +80,9 @@ export class RotatingMenuMap {
 }
 
 export const rotatingMenuMap = new RotatingMenuMap(
-  new Date(2026, 8, 11),
-  new Date(2027, 5, 31),
+  // months here are zero indexed!
+  new Date(2026, 7, 11),
+  new Date(2027, 4, 31),
   new Date(2027, 0, 1),
   0,
   { comfort, mindful, sides, soup, international },
