@@ -1,0 +1,244 @@
+/*
+Generates the static data API served from /api/v1/.
+
+Everything is emitted at build time into `public/api/v1/` (which Vite copies verbatim
+into `dist/`), so the endpoints are plain files on the CDN rather than Worker routes.
+
+Endpoints:
+  /api/v1/signature.json      - just the hashes + lunch window (cheap to poll)
+  /api/v1/schedules.json      - schedules and their period times, with `dates` resolved
+  /api/v1/schedule-dates.json - the raw schedule name -> dates map
+  /api/v1/lunch.json          - one menu per school day in a rolling window
+  /api/v1/index.json          - all three of the above in a single response
+
+The signature is a hash of the *source files*, not of the response, so it only moves
+when the underlying data actually changes. The lunch window shifts every day (the site
+is rebuilt nightly) without changing the hash - clients use `window.refreshAfter` for
+that instead.
+*/
+
+import { createHash } from 'crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { resolve, dirname, relative } from 'path';
+import { fileURLToPath } from 'url';
+import { rotatingMenuMap } from '../src/utils/food/rotating-map';
+import testDate from '../src/utils/dateparser';
+import type { ScheduleCollection } from '../src/utils/types';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = resolve(__dirname, '..');
+const outDir = resolve(root, 'public/api/v1');
+
+const VERSION = 1;
+const DAYS_BEHIND = 7;
+const DAYS_AHEAD = 21;
+// once fewer than this many days of future menus remain, clients should refetch
+const REFRESH_MARGIN_DAYS = 7;
+
+const SCHEDULES_FILE = 'src/data/schedules.json';
+const SCHEDULE_DATES_FILE = 'src/data/schedule-dates.json';
+const LUNCH_FILES = [
+  'src/data/lunch-rotating/comfort.json',
+  'src/data/lunch-rotating/international.json',
+  'src/data/lunch-rotating/mindful.json',
+  'src/data/lunch-rotating/sides.json',
+  'src/data/lunch-rotating/soup.json',
+  'src/data/lunch-rotating/special.json',
+];
+
+const sha256 = (input: string | Buffer): string => createHash('sha256').update(input).digest('hex');
+
+/** Hash of a file's bytes exactly as they sit on disk. */
+const hashFile = (relPath: string): string => sha256(readFileSync(resolve(root, relPath)));
+
+/**
+ * Hash of a set of named inputs. Hashing "<name> <hash>" lines rather than the
+ * concatenated bytes keeps the result stable regardless of read order and makes it
+ * impossible for two files to blur together.
+ */
+const hashInputs = (entries: [string, string][]): string => sha256(
+  entries
+    .slice()
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, hash]) => `${name} ${hash}\n`)
+    .join(''),
+);
+
+/** Local-time YYYY-MM-DD. The rest of the app works in local time, so this does too. */
+function toISODate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function startOfDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// schedules
+// ---------------------------------------------------------------------------
+
+const rawSchedules = JSON.parse(readFileSync(resolve(root, SCHEDULES_FILE), 'utf8')) as ScheduleCollection[];
+const scheduleDates = JSON.parse(readFileSync(resolve(root, SCHEDULE_DATES_FILE), 'utf8')) as Record<string, string[]>;
+
+// Mirrors the merge the app does in src/stores/schedules.ts: schedules with `dates: null`
+// pull their dates out of schedule-dates.json.
+const schedules: ScheduleCollection[] = rawSchedules.map((schedule) => {
+  if (schedule.dates !== null) return schedule;
+  const dates = scheduleDates[schedule.name];
+  if (!dates) throw new Error(`Schedule "${schedule.name}" has null dates but no entry in schedule-dates.json`);
+  return { ...schedule, dates };
+});
+
+/**
+ * Mirrors Bell.getScheduleType: the *last* matching schedule wins, and a schedule with
+ * no modes (No School) means there's no school that day.
+ */
+function scheduleTypeFor(date: Date): ScheduleCollection | null {
+  let match: ScheduleCollection | null = null;
+  for (const schedule of schedules) {
+    if (testDate(date, schedule.dates!)) match = schedule;
+  }
+  return match;
+}
+
+// ---------------------------------------------------------------------------
+// lunch
+// ---------------------------------------------------------------------------
+
+// `--today <date>` pins the window's anchor date, which makes the output reproducible
+// and lets you inspect a window other than the one around the real current date.
+function anchorDate(): Date {
+  const args = process.argv.slice(2);
+  const index = args.indexOf('--today');
+  if (index === -1) return startOfDay(new Date());
+
+  const parsed = new Date(args[index + 1]);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`--today: could not parse "${args[index + 1]}"`);
+  return startOfDay(parsed);
+}
+
+const today = anchorDate();
+const validFrom = startOfDay(rotatingMenuMap.validFrom);
+const validTo = startOfDay(rotatingMenuMap.validTo);
+
+const requestedStart = addDays(today, -DAYS_BEHIND);
+const requestedEnd = addDays(today, DAYS_AHEAD);
+const windowStart = requestedStart < validFrom ? validFrom : requestedStart;
+const windowEnd = requestedEnd > validTo ? validTo : requestedEnd;
+
+type LunchDay = {
+  date: string;
+  weekday: string;
+  scheduleType: string;
+  menu: ReturnType<typeof rotatingMenuMap.getMenuUnchecked>;
+};
+
+const days: LunchDay[] = [];
+for (let date = windowStart; date <= windowEnd; date = addDays(date, 1)) {
+  const scheduleType = scheduleTypeFor(date);
+  // no menu on weekends, holidays, or over the summer - same gate LunchCard.vue uses
+  if (!scheduleType || scheduleType.modes.length === 0 || scheduleType.name === 'Summer') continue;
+
+  days.push({
+    date: toISODate(date),
+    weekday: date.toLocaleDateString('en-US', { weekday: 'long' }),
+    scheduleType: scheduleType.name,
+    menu: rotatingMenuMap.getMenuUnchecked(date),
+  });
+}
+
+if (days.length === 0) {
+  console.warn(
+    `[api] No lunch menus generated: the requested window (${toISODate(requestedStart)} to ${toISODate(requestedEnd)}) `
+    + `falls outside the rotating menu's valid range (${toISODate(validFrom)} to ${toISODate(validTo)}). `
+    + 'The menu data in src/data/lunch-rotating/ is likely out of date.',
+  );
+}
+
+// Clamping against the valid range can leave nothing at all (the menu data has expired,
+// or the school year hasn't started yet), in which case there's no window to report.
+const isEmpty = windowEnd < windowStart;
+
+// If the valid range cut the window short there are no more menus to wait for, but we
+// still never point refreshAfter before the start of the window.
+const refreshCandidate = addDays(windowEnd, -REFRESH_MARGIN_DAYS);
+const refreshAfter = refreshCandidate < windowStart ? windowStart : refreshCandidate;
+
+const lunchWindow = {
+  start: isEmpty ? null : toISODate(windowStart),
+  end: isEmpty ? null : toISODate(windowEnd),
+  // what the window would have been without clamping; if this is past `end`, the
+  // source data is exhausted and refetching won't produce more days
+  requestedEnd: toISODate(requestedEnd),
+  // refetch once the current date reaches this, i.e. when only a week of menus is left.
+  // With nothing to expire, there's no point holding a client off past the anchor date.
+  refreshAfter: toISODate(isEmpty ? today : refreshAfter),
+};
+
+const lunch = {
+  window: lunchWindow,
+  validRange: { start: toISODate(validFrom), end: toISODate(validTo) },
+  days,
+};
+
+// ---------------------------------------------------------------------------
+// signature
+// ---------------------------------------------------------------------------
+
+// The menus depend on the rotation config as well as the data files, so the config goes
+// into the lunch hash alongside them.
+const rotationConfig = JSON.stringify({
+  validFrom: toISODate(validFrom),
+  validTo: toISODate(validTo),
+  semesterSwitch: toISODate(startOfDay(rotatingMenuMap.semesterSwitch)),
+  offset: rotatingMenuMap.offset,
+  cyclePeriod: rotatingMenuMap.cycle_period,
+});
+
+const sectionHashes = {
+  schedules: hashFile(SCHEDULES_FILE),
+  scheduleDates: hashFile(SCHEDULE_DATES_FILE),
+  lunch: hashInputs([
+    ...LUNCH_FILES.map((file) => [file, hashFile(file)] as [string, string]),
+    ['rotation-config', sha256(rotationConfig)],
+  ]),
+};
+
+const signature = {
+  ...sectionHashes,
+  combined: hashInputs(Object.entries(sectionHashes)),
+};
+
+// ---------------------------------------------------------------------------
+// write
+// ---------------------------------------------------------------------------
+
+const generatedAt = new Date().toISOString();
+const envelope = { version: VERSION, generatedAt, signature };
+
+const endpoints: Record<string, unknown> = {
+  'signature.json': { ...envelope, lunchWindow },
+  'schedules.json': { ...envelope, schedules },
+  'schedule-dates.json': { ...envelope, scheduleDates },
+  'lunch.json': { ...envelope, ...lunch },
+  'index.json': { ...envelope, schedules, scheduleDates, lunch },
+};
+
+mkdirSync(outDir, { recursive: true });
+for (const [name, body] of Object.entries(endpoints)) {
+  writeFileSync(resolve(outDir, name), `${JSON.stringify(body, null, 2)}\n`);
+}
+
+console.log(
+  `Saved ${Object.keys(endpoints).length} endpoints to ${relative(root, outDir)} `
+  + `(${schedules.length} schedules, ${days.length} lunch days, signature ${signature.combined.slice(0, 12)})`,
+);
