@@ -121,8 +121,18 @@ function anchorDate(): Date {
   const index = args.indexOf('--today');
   if (index === -1) return startOfDay(new Date());
 
-  const parsed = new Date(args[index + 1]);
-  if (Number.isNaN(parsed.getTime())) throw new Error(`--today: could not parse "${args[index + 1]}"`);
+  const raw = args[index + 1] ?? '';
+  // Built from local components on purpose: `new Date('2026-09-20')` is parsed as UTC
+  // midnight, which startOfDay then pulls back to the 19th anywhere west of Greenwich.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) throw new Error(`--today: expected YYYY-MM-DD, got "${raw}"`);
+  const [year, month, day] = match.slice(1).map(Number);
+  const parsed = new Date(year, month - 1, day);
+  // `new Date(2026, 1, 31)` rolls over to March 3 rather than failing, so reject
+  // anything that didn't survive the round trip.
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    throw new Error(`--today: "${raw}" is not a real calendar date`);
+  }
   return startOfDay(parsed);
 }
 
