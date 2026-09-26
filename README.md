@@ -62,7 +62,8 @@ A client caches the hashes it last saw and only refetches a section whose hash m
 
 ### The lunch window
 
-`lunch.json` covers one week behind and three weeks ahead of the build date, skipping
+`lunch.json` covers one week behind and three weeks ahead of the build date (the current
+date in the school's time zone, America/Chicago, wherever the build runs), skipping
 weekends, no-school days, and summer. The site is rebuilt nightly, so the window advances
 on its own.
 

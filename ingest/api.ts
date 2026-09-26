@@ -36,6 +36,8 @@ const DAYS_BEHIND = 7;
 const DAYS_AHEAD = 21;
 // once fewer than this many days of future menus remain, clients should refetch
 const REFRESH_MARGIN_DAYS = 7;
+// the school's time zone, which decides what "today" is regardless of where the build runs
+const SCHOOL_TIME_ZONE = 'America/Chicago';
 
 /**
  * SHA-256 over a value's canonical JSON (RFC 8785): keys sorted, whitespace and number
@@ -65,14 +67,22 @@ function startOfDay(date: Date): Date {
 // lunch
 // ---------------------------------------------------------------------------
 
+/** The current date at the school as YYYY-MM-DD; the build machine usually runs in UTC. */
+function schoolToday(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SCHOOL_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)!.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
 // `--today <date>` pins the window's anchor date, which makes the output reproducible
 // and lets you inspect a window other than the one around the real current date.
+// Without it, the anchor is the current date at the school.
 function anchorDate(): Date {
   const args = process.argv.slice(2);
   const index = args.indexOf('--today');
-  if (index === -1) return startOfDay(new Date());
-
-  const raw = args[index + 1] ?? '';
+  const raw = index === -1 ? schoolToday() : args[index + 1] ?? '';
   // Built from local components on purpose: `new Date('2026-09-20')` is parsed as UTC
   // midnight, which startOfDay then pulls back to the 19th anywhere west of Greenwich.
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
