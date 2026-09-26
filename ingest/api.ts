@@ -19,12 +19,13 @@ for that instead.
 
 import canonicalize from 'canonicalize';
 import { createHash } from 'crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import { resolve, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
+import scheduleDates from '../src/data/schedule-dates.json';
+import Bell from '../src/utils/bell';
 import { rotatingMenuMap } from '../src/utils/food/rotating-map';
-import testDate from '../src/utils/dateparser';
-import type { ScheduleCollection } from '../src/utils/types';
+import schedules from '../src/utils/official-schedules';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -35,19 +36,6 @@ const DAYS_BEHIND = 7;
 const DAYS_AHEAD = 21;
 // once fewer than this many days of future menus remain, clients should refetch
 const REFRESH_MARGIN_DAYS = 7;
-
-const SCHEDULES_FILE = 'src/data/schedules.json';
-const SCHEDULE_DATES_FILE = 'src/data/schedule-dates.json';
-const LUNCH_FILES = [
-  'src/data/lunch-rotating/comfort.json',
-  'src/data/lunch-rotating/international.json',
-  'src/data/lunch-rotating/mindful.json',
-  'src/data/lunch-rotating/sides.json',
-  'src/data/lunch-rotating/soup.json',
-  'src/data/lunch-rotating/special.json',
-];
-
-const readJSON = (relPath: string): unknown => JSON.parse(readFileSync(resolve(root, relPath), 'utf8'));
 
 /**
  * SHA-256 over a value's canonical JSON (RFC 8785): keys sorted, whitespace and number
@@ -71,34 +59,6 @@ function startOfDay(date: Date): Date {
   const next = new Date(date);
   next.setHours(0, 0, 0, 0);
   return next;
-}
-
-// ---------------------------------------------------------------------------
-// schedules
-// ---------------------------------------------------------------------------
-
-const rawSchedules = readJSON(SCHEDULES_FILE) as ScheduleCollection[];
-const scheduleDates = readJSON(SCHEDULE_DATES_FILE) as Record<string, string[]>;
-
-// Mirrors the merge the app does in src/stores/schedules.ts: schedules with `dates: null`
-// pull their dates out of schedule-dates.json.
-const schedules: ScheduleCollection[] = rawSchedules.map((schedule) => {
-  if (schedule.dates !== null) return schedule;
-  const dates = scheduleDates[schedule.name];
-  if (!dates) throw new Error(`Schedule "${schedule.name}" has null dates but no entry in schedule-dates.json`);
-  return { ...schedule, dates };
-});
-
-/**
- * Mirrors Bell.getScheduleType: the *last* matching schedule wins, and a schedule with
- * no modes (No School) means there's no school that day.
- */
-function scheduleTypeFor(date: Date): ScheduleCollection | null {
-  let match: ScheduleCollection | null = null;
-  for (const schedule of schedules) {
-    if (testDate(date, schedule.dates!)) match = schedule;
-  }
-  return match;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,9 +103,10 @@ type LunchDay = {
 
 const days: LunchDay[] = [];
 for (let date = windowStart; date <= windowEnd; date = addDays(date, 1)) {
-  const scheduleType = scheduleTypeFor(date);
+  const scheduleType = Bell.getScheduleType(date, schedules);
   // no menu on weekends, holidays, or over the summer - same gate LunchCard.vue uses
-  if (!scheduleType || scheduleType.modes.length === 0 || scheduleType.name === 'Summer') continue;
+  // (a schedule with no modes means there's no school that day)
+  if (scheduleType.modes.length === 0 || scheduleType.name === 'Summer') continue;
 
   days.push({
     date: toISODate(date),
@@ -155,9 +116,9 @@ for (let date = windowStart; date <= windowEnd; date = addDays(date, 1)) {
 
 if (days.length === 0) {
   console.warn(
-    `[api] No lunch menus generated: the requested window (${toISODate(requestedStart)} to ${toISODate(requestedEnd)}) `
-    + `falls outside the rotating menu's valid range (${toISODate(validFrom)} to ${toISODate(validTo)}). `
-    + 'The menu data in src/data/lunch-rotating/ is likely out of date.',
+    `[api] No lunch menus generated: no school day in the requested window (${toISODate(requestedStart)} to ${toISODate(requestedEnd)}) `
+    + `falls inside the rotating menu's valid range (${toISODate(validFrom)} to ${toISODate(validTo)}). `
+    + 'If school is in session, the menu data in src/data/lunch-rotating/ is likely out of date.',
   );
 }
 
@@ -190,20 +151,23 @@ const lunch = {
 
 // schedules and scheduleDates are hashed exactly as served, so the schedules hash also
 // moves when a resolved `dates` entry changes in schedule-dates.json.
-// The menus depend on the rotation config as well as the data files, so the config goes
-// into the lunch hash alongside them.
+// The lunch hash covers everything that decides the menus except the window itself: the
+// menu data as the rotating map loaded it, the rotation config, and the schedule fields
+// the gate above reads to pick school days (period times are left out, since they don't
+// affect lunch).
 const signature = {
   schedules: hashJSON(schedules),
   scheduleDates: hashJSON(scheduleDates),
   lunch: hashJSON({
-    menus: Object.fromEntries(LUNCH_FILES.map((file) => [file, readJSON(file)])),
+    menus: { stations: rotatingMenuMap.stations, special: rotatingMenuMap.special },
     rotationConfig: {
       validFrom: toISODate(validFrom),
       validTo: toISODate(validTo),
-      semesterSwitch: toISODate(startOfDay(rotatingMenuMap.semesterSwitch)),
+      semesterSwitch: toISODate(rotatingMenuMap.semesterSwitch),
       offset: rotatingMenuMap.offset,
       cyclePeriod: rotatingMenuMap.cycle_period,
     },
+    schoolDays: schedules.map(({ name, dates, modes }) => ({ name, dates, hasSchool: modes.length > 0 })),
   }),
 };
 

@@ -54,9 +54,10 @@ carries all three so a client can poll it:
 Each value is a SHA-256 over the section's **JSON data** in canonical form
 ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)), so reformatting a file or reordering
 its keys never moves a hash. `schedules` and `scheduleDates` hash the data exactly as
-served. `lunch` hashes the source data rather than the response: the six files in
-`src/data/lunch-rotating/` plus the rotation config in `src/utils/food/rotating-map.ts` (the
-valid range, semester switch, week offset, and cycle period all change what the menus say).
+served. `lunch` hashes the source data rather than the response: the menus in
+`src/data/lunch-rotating/`, the rotation config in `src/utils/food/rotating-map.ts` (the
+valid range, semester switch, week offset, and cycle period all change what the menus say),
+and which days each schedule marks as school days (adding a no-school day drops a menu).
 A client caches the hashes it last saw and only refetches a section whose hash moved.
 
 ### The lunch window
