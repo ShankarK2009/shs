@@ -38,7 +38,6 @@ them costs nothing.
 | `/api/v1/schedules.json` | Schedules and their period times, with `dates` resolved |
 | `/api/v1/schedule-dates.json` | The raw schedule name → dates map |
 | `/api/v1/lunch.json` | One menu per school day in a rolling window |
-| `/api/v1/index.json` | All three of the above in a single response |
 
 Every response carries `version`, `generatedAt`, and a `signature`:
 

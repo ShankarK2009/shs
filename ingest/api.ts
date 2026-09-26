@@ -9,7 +9,6 @@ Endpoints:
   /api/v1/schedules.json      - schedules and their period times, with `dates` resolved
   /api/v1/schedule-dates.json - the raw schedule name -> dates map
   /api/v1/lunch.json          - one menu per school day in a rolling window
-  /api/v1/index.json          - all three of the above in a single response
 
 The signature is a hash of the *source files*, not of the response, so it only moves
 when the underlying data actually changes. The lunch window shifts every day (the site
@@ -233,7 +232,6 @@ const endpoints: Record<string, unknown> = {
   'schedules.json': { ...envelope, schedules },
   'schedule-dates.json': { ...envelope, scheduleDates },
   'lunch.json': { ...envelope, ...lunch },
-  'index.json': { ...envelope, schedules, scheduleDates, lunch },
 };
 
 mkdirSync(outDir, { recursive: true });
