@@ -147,8 +147,6 @@ const windowEnd = requestedEnd > validTo ? validTo : requestedEnd;
 
 type LunchDay = {
   date: string;
-  weekday: string;
-  scheduleType: string;
   menu: ReturnType<typeof rotatingMenuMap.getMenuUnchecked>;
 };
 
@@ -160,8 +158,6 @@ for (let date = windowStart; date <= windowEnd; date = addDays(date, 1)) {
 
   days.push({
     date: toISODate(date),
-    weekday: date.toLocaleDateString('en-US', { weekday: 'long' }),
-    scheduleType: scheduleType.name,
     menu: rotatingMenuMap.getMenuUnchecked(date),
   });
 }
