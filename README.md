@@ -81,8 +81,10 @@ reaches it, which is the point where only a week of future menus is left.
 
 `end` is clamped to `validRange`, the range the rotating menu data actually covers. Once
 `end` reaches `validRange.end`, the source data is exhausted and refetching will not produce
-more days until `src/data/lunch-rotating/` is updated. If the window falls outside that range
-entirely, `start` and `end` are `null` and `days` is empty.
+more days until `src/data/lunch-rotating/` is updated, so `refreshAfter` is `null` and only a
+change to the lunch signature is worth refetching for. If the window falls outside that range
+entirely, `start` and `end` are `null` and `days` is empty; before the school year,
+`refreshAfter` is the date the first menu enters the window.
 
 ### Regenerating
 

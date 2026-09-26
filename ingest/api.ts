@@ -102,11 +102,18 @@ type LunchDay = {
 };
 
 const days: LunchDay[] = [];
-for (let date = windowStart; date <= windowEnd; date = addDays(date, 1)) {
+// school days in the requested window that the rotating menu data doesn't cover
+const missing: string[] = [];
+for (let date = requestedStart; date <= requestedEnd; date = addDays(date, 1)) {
   const scheduleType = Bell.getScheduleType(date, schedules);
   // no menu on weekends, holidays, or over the summer - same gate LunchCard.vue uses
   // (a schedule with no modes means there's no school that day)
   if (scheduleType.modes.length === 0 || scheduleType.name === 'Summer') continue;
+
+  if (date < validFrom || date > validTo) {
+    missing.push(toISODate(date));
+    continue;
+  }
 
   days.push({
     date: toISODate(date),
@@ -114,11 +121,11 @@ for (let date = windowStart; date <= windowEnd; date = addDays(date, 1)) {
   });
 }
 
-if (days.length === 0) {
+if (missing.length > 0) {
   console.warn(
-    `[api] No lunch menus generated: no school day in the requested window (${toISODate(requestedStart)} to ${toISODate(requestedEnd)}) `
-    + `falls inside the rotating menu's valid range (${toISODate(validFrom)} to ${toISODate(validTo)}). `
-    + 'If school is in session, the menu data in src/data/lunch-rotating/ is likely out of date.',
+    `[api] No lunch menu for ${missing.length} school day(s) (${missing[0]} to ${missing[missing.length - 1]}) `
+    + `outside the rotating menu's valid range (${toISODate(validFrom)} to ${toISODate(validTo)}). `
+    + 'Either the menu data in src/data/lunch-rotating/ or the schedule data (e.g. a missing Summer entry) is out of date.',
   );
 }
 
@@ -126,17 +133,18 @@ if (days.length === 0) {
 // or the school year hasn't started yet), in which case there's no window to report.
 const isEmpty = windowEnd < windowStart;
 
-// If the valid range cut the window short there are no more menus to wait for, but we
-// still never point refreshAfter before the start of the window.
-const refreshCandidate = addDays(windowEnd, -REFRESH_MARGIN_DAYS);
-const refreshAfter = refreshCandidate < windowStart ? windowStart : refreshCandidate;
+// When to refetch for more future menus: once only a week of them is left, or, before the
+// school year, once the first valid day enters the window. When the window already reaches
+// validTo there's nothing more to wait for - only new menu data (which moves the lunch
+// signature) can add days - so this is null.
+let refreshAfter: Date | null = addDays(windowEnd, -REFRESH_MARGIN_DAYS);
+if (requestedEnd >= validTo) refreshAfter = null;
+else if (isEmpty) refreshAfter = addDays(validFrom, -DAYS_AHEAD);
 
 const lunchWindow = {
   start: isEmpty ? null : toISODate(windowStart),
   end: isEmpty ? null : toISODate(windowEnd),
-  // refetch once the current date reaches this, i.e. when only a week of menus is left.
-  // With nothing to expire, there's no point holding a client off past the anchor date.
-  refreshAfter: toISODate(isEmpty ? today : refreshAfter),
+  refreshAfter: refreshAfter && toISODate(refreshAfter),
 };
 
 const lunch = {
