@@ -51,11 +51,13 @@ carries all three so a client can poll it:
 }
 ```
 
-Each value is a SHA-256 over the **source files**, not over the response body. So
-`schedules` is the hash of `src/data/schedules.json`, and `lunch` is a hash over the six
-files in `src/data/lunch-rotating/` plus the rotation config in `src/utils/food/rotating-map.ts`
-(the valid range, semester switch, week offset, and cycle period all change what the menus
-say). A client caches the hashes it last saw and only refetches a section whose hash moved.
+Each value is a SHA-256 over the section's **JSON data** in canonical form
+([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)), so reformatting a file or reordering
+its keys never moves a hash. `schedules` and `scheduleDates` hash the data exactly as
+served. `lunch` hashes the source data rather than the response: the six files in
+`src/data/lunch-rotating/` plus the rotation config in `src/utils/food/rotating-map.ts` (the
+valid range, semester switch, week offset, and cycle period all change what the menus say).
+A client caches the hashes it last saw and only refetches a section whose hash moved.
 
 ### The lunch window
 
@@ -63,8 +65,8 @@ say). A client caches the hashes it last saw and only refetches a section whose 
 weekends, no-school days, and summer. The site is rebuilt nightly, so the window advances
 on its own.
 
-Because the signature hashes files rather than the response, it does *not* change when the
-window slides. That is deliberate — it separates "the menu data changed" from "I am running
+Because the lunch signature hashes the source data rather than the response, it does *not*
+change when the window slides. That is deliberate — it separates "the menu data changed" from "I am running
 out of days". For the second, use `window.refreshAfter`: refetch once the current date
 reaches it, which is the point where only a week of future menus is left.
 

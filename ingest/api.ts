@@ -10,12 +10,14 @@ Endpoints:
   /api/v1/schedule-dates.json - the raw schedule name -> dates map
   /api/v1/lunch.json          - one menu per school day in a rolling window
 
-The signature is a hash of the *source files*, not of the response, so it only moves
-when the underlying data actually changes. The lunch window shifts every day (the site
-is rebuilt nightly) without changing the hash - clients use `window.refreshAfter` for
-that instead.
+Each signature is a hash of the section's JSON *data* in canonical form, so it only moves
+when the data actually changes - never for formatting or key order. The lunch signature
+covers the source menus rather than the response: the lunch window shifts every day (the
+site is rebuilt nightly) without changing the hash, and clients use `window.refreshAfter`
+for that instead.
 */
 
+import canonicalize from 'canonicalize';
 import { createHash } from 'crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname, relative } from 'path';
@@ -45,23 +47,13 @@ const LUNCH_FILES = [
   'src/data/lunch-rotating/special.json',
 ];
 
-const sha256 = (input: string | Buffer): string => createHash('sha256').update(input).digest('hex');
-
-/** Hash of a file's bytes exactly as they sit on disk. */
-const hashFile = (relPath: string): string => sha256(readFileSync(resolve(root, relPath)));
+const readJSON = (relPath: string): unknown => JSON.parse(readFileSync(resolve(root, relPath), 'utf8'));
 
 /**
- * Hash of a set of named inputs. Hashing "<name> <hash>" lines rather than the
- * concatenated bytes keeps the result stable regardless of read order and makes it
- * impossible for two files to blur together.
+ * SHA-256 over a value's canonical JSON (RFC 8785): keys sorted, whitespace and number
+ * formatting normalized. The hash depends only on the data, not on how a file is laid out.
  */
-const hashInputs = (entries: [string, string][]): string => sha256(
-  entries
-    .slice()
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, hash]) => `${name} ${hash}\n`)
-    .join(''),
-);
+const hashJSON = (value: unknown): string => createHash('sha256').update(canonicalize(value)!).digest('hex');
 
 /** Local-time YYYY-MM-DD. The rest of the app works in local time, so this does too. */
 function toISODate(date: Date): string {
@@ -85,8 +77,8 @@ function startOfDay(date: Date): Date {
 // schedules
 // ---------------------------------------------------------------------------
 
-const rawSchedules = JSON.parse(readFileSync(resolve(root, SCHEDULES_FILE), 'utf8')) as ScheduleCollection[];
-const scheduleDates = JSON.parse(readFileSync(resolve(root, SCHEDULE_DATES_FILE), 'utf8')) as Record<string, string[]>;
+const rawSchedules = readJSON(SCHEDULES_FILE) as ScheduleCollection[];
+const scheduleDates = readJSON(SCHEDULE_DATES_FILE) as Record<string, string[]>;
 
 // Mirrors the merge the app does in src/stores/schedules.ts: schedules with `dates: null`
 // pull their dates out of schedule-dates.json.
@@ -196,23 +188,23 @@ const lunch = {
 // signature
 // ---------------------------------------------------------------------------
 
+// schedules and scheduleDates are hashed exactly as served, so the schedules hash also
+// moves when a resolved `dates` entry changes in schedule-dates.json.
 // The menus depend on the rotation config as well as the data files, so the config goes
 // into the lunch hash alongside them.
-const rotationConfig = JSON.stringify({
-  validFrom: toISODate(validFrom),
-  validTo: toISODate(validTo),
-  semesterSwitch: toISODate(startOfDay(rotatingMenuMap.semesterSwitch)),
-  offset: rotatingMenuMap.offset,
-  cyclePeriod: rotatingMenuMap.cycle_period,
-});
-
 const signature = {
-  schedules: hashFile(SCHEDULES_FILE),
-  scheduleDates: hashFile(SCHEDULE_DATES_FILE),
-  lunch: hashInputs([
-    ...LUNCH_FILES.map((file) => [file, hashFile(file)] as [string, string]),
-    ['rotation-config', sha256(rotationConfig)],
-  ]),
+  schedules: hashJSON(schedules),
+  scheduleDates: hashJSON(scheduleDates),
+  lunch: hashJSON({
+    menus: Object.fromEntries(LUNCH_FILES.map((file) => [file, readJSON(file)])),
+    rotationConfig: {
+      validFrom: toISODate(validFrom),
+      validTo: toISODate(validTo),
+      semesterSwitch: toISODate(startOfDay(rotatingMenuMap.semesterSwitch)),
+      offset: rotatingMenuMap.offset,
+      cyclePeriod: rotatingMenuMap.cycle_period,
+    },
+  }),
 };
 
 // ---------------------------------------------------------------------------
