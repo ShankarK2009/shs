@@ -186,9 +186,6 @@ const refreshAfter = refreshCandidate < windowStart ? windowStart : refreshCandi
 const lunchWindow = {
   start: isEmpty ? null : toISODate(windowStart),
   end: isEmpty ? null : toISODate(windowEnd),
-  // what the window would have been without clamping; if this is past `end`, the
-  // source data is exhausted and refetching won't produce more days
-  requestedEnd: toISODate(requestedEnd),
   // refetch once the current date reaches this, i.e. when only a week of menus is left.
   // With nothing to expire, there's no point holding a client off past the anchor date.
   refreshAfter: toISODate(isEmpty ? today : refreshAfter),

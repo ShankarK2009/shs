@@ -72,14 +72,13 @@ reaches it, which is the point where only a week of future menus is left.
 "window": {
   "start": "2026-09-13",
   "end": "2026-10-11",
-  "requestedEnd": "2026-10-11",
   "refreshAfter": "2026-10-04"
 }
 ```
 
-`end` is clamped to the range the rotating menu data actually covers. If `end` is earlier
-than `requestedEnd`, the source data is exhausted and refetching will not produce more days
-until `src/data/lunch-rotating/` is updated. If the window falls outside that range
+`end` is clamped to `validRange`, the range the rotating menu data actually covers. Once
+`end` reaches `validRange.end`, the source data is exhausted and refetching will not produce
+more days until `src/data/lunch-rotating/` is updated. If the window falls outside that range
 entirely, `start` and `end` are `null` and `days` is empty.
 
 ### Regenerating
