@@ -45,8 +45,7 @@ Every response carries `version`, `generatedAt`, and a `signature`:
 "signature": {
   "schedules": "52e9262b…",
   "scheduleDates": "8de5ff53…",
-  "lunch": "c147cb88…",
-  "combined": "34be508e…"
+  "lunch": "c147cb88…"
 }
 ```
 

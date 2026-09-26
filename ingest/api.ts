@@ -206,18 +206,13 @@ const rotationConfig = JSON.stringify({
   cyclePeriod: rotatingMenuMap.cycle_period,
 });
 
-const sectionHashes = {
+const signature = {
   schedules: hashFile(SCHEDULES_FILE),
   scheduleDates: hashFile(SCHEDULE_DATES_FILE),
   lunch: hashInputs([
     ...LUNCH_FILES.map((file) => [file, hashFile(file)] as [string, string]),
     ['rotation-config', sha256(rotationConfig)],
   ]),
-};
-
-const signature = {
-  ...sectionHashes,
-  combined: hashInputs(Object.entries(sectionHashes)),
 };
 
 // ---------------------------------------------------------------------------
@@ -241,5 +236,5 @@ for (const [name, body] of Object.entries(endpoints)) {
 
 console.log(
   `Saved ${Object.keys(endpoints).length} endpoints to ${relative(root, outDir)} `
-  + `(${schedules.length} schedules, ${days.length} lunch days, signature ${signature.combined.slice(0, 12)})`,
+  + `(${schedules.length} schedules, ${days.length} lunch days)`,
 );
