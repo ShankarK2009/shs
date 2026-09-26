@@ -12,9 +12,9 @@ Endpoints:
 
 Each signature is a hash of the section's JSON *data* in canonical form, so it only moves
 when the data actually changes - never for formatting or key order. The lunch signature
-covers the source menus rather than the response: the lunch window shifts every day (the
-site is rebuilt nightly) without changing the hash, and clients use `window.refreshAfter`
-for that instead.
+covers every menu in the data's valid range rather than just the window: the lunch window
+shifts every day (the site is rebuilt nightly) without changing the hash, and clients use
+`window.refreshAfter` for that instead.
 */
 
 import canonicalize from 'canonicalize';
@@ -101,24 +101,31 @@ type LunchDay = {
   menu: ReturnType<typeof rotatingMenuMap.getMenuUnchecked>;
 };
 
-const days: LunchDay[] = [];
-// school days in the requested window that the rotating menu data doesn't cover
-const missing: string[] = [];
-for (let date = requestedStart; date <= requestedEnd; date = addDays(date, 1)) {
+// no menu on weekends, holidays, or over the summer - same gate LunchCard.vue uses
+// (a schedule with no modes means there's no school that day)
+function hasLunch(date: Date): boolean {
   const scheduleType = Bell.getScheduleType(date, schedules);
-  // no menu on weekends, holidays, or over the summer - same gate LunchCard.vue uses
-  // (a schedule with no modes means there's no school that day)
-  if (scheduleType.modes.length === 0 || scheduleType.name === 'Summer') continue;
+  return scheduleType.modes.length > 0 && scheduleType.name !== 'Summer';
+}
 
-  if (date < validFrom || date > validTo) {
-    missing.push(toISODate(date));
-    continue;
-  }
-
-  days.push({
+// every school day the rotating menu data covers; the lunch signature hashes this, and the
+// response serves the slice inside the window
+const allDays: LunchDay[] = [];
+for (let date = validFrom; date <= validTo; date = addDays(date, 1)) {
+  if (!hasLunch(date)) continue;
+  allDays.push({
     date: toISODate(date),
     menu: rotatingMenuMap.getMenuUnchecked(date),
   });
+}
+
+// ISO dates compare correctly as strings; an empty window (start > end) selects nothing
+const days = allDays.filter(({ date }) => date >= toISODate(windowStart) && date <= toISODate(windowEnd));
+
+// school days in the requested window that the rotating menu data doesn't cover
+const missing: string[] = [];
+for (let date = requestedStart; date <= requestedEnd; date = addDays(date, 1)) {
+  if ((date < validFrom || date > validTo) && hasLunch(date)) missing.push(toISODate(date));
 }
 
 if (missing.length > 0) {
@@ -159,24 +166,13 @@ const lunch = {
 
 // schedules and scheduleDates are hashed exactly as served, so the schedules hash also
 // moves when a resolved `dates` entry changes in schedule-dates.json.
-// The lunch hash covers everything that decides the menus except the window itself: the
-// menu data as the rotating map loaded it, the rotation config, and the schedule fields
-// the gate above reads to pick school days (period times are left out, since they don't
-// affect lunch).
+// The lunch hash covers every menu the data can produce rather than the window's slice, so
+// it moves whenever a served menu would change (menu data, rotation config or logic, or
+// which days are school days) but not when the window slides.
 const signature = {
   schedules: hashJSON(schedules),
   scheduleDates: hashJSON(scheduleDates),
-  lunch: hashJSON({
-    menus: { stations: rotatingMenuMap.stations, special: rotatingMenuMap.special },
-    rotationConfig: {
-      validFrom: toISODate(validFrom),
-      validTo: toISODate(validTo),
-      semesterSwitch: toISODate(rotatingMenuMap.semesterSwitch),
-      offset: rotatingMenuMap.offset,
-      cyclePeriod: rotatingMenuMap.cycle_period,
-    },
-    schoolDays: schedules.map(({ name, dates, modes }) => ({ name, dates, hasSchool: modes.length > 0 })),
-  }),
+  lunch: hashJSON({ validRange: lunch.validRange, days: allDays }),
 };
 
 // ---------------------------------------------------------------------------
