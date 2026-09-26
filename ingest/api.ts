@@ -220,13 +220,15 @@ const signature = {
 // ---------------------------------------------------------------------------
 
 const generatedAt = new Date().toISOString();
-const envelope = { version: VERSION, generatedAt, signature };
+// signature.json carries every section's hash so clients can poll it; each data endpoint
+// carries only its own
+const envelope = (sectionSignature: unknown) => ({ version: VERSION, generatedAt, signature: sectionSignature });
 
 const endpoints: Record<string, unknown> = {
-  'signature.json': { ...envelope, lunchWindow },
-  'schedules.json': { ...envelope, schedules },
-  'schedule-dates.json': { ...envelope, scheduleDates },
-  'lunch.json': { ...envelope, ...lunch },
+  'signature.json': { ...envelope(signature), lunchWindow },
+  'schedules.json': { ...envelope(signature.schedules), schedules },
+  'schedule-dates.json': { ...envelope(signature.scheduleDates), scheduleDates },
+  'lunch.json': { ...envelope(signature.lunch), ...lunch },
 };
 
 mkdirSync(outDir, { recursive: true });

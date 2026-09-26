@@ -39,7 +39,9 @@ them costs nothing.
 | `/api/v1/schedule-dates.json` | The raw schedule name → dates map |
 | `/api/v1/lunch.json` | One menu per school day in a rolling window |
 
-Every response carries `version`, `generatedAt`, and a `signature`:
+Every response carries `version`, `generatedAt`, and a `signature`. Each data endpoint
+carries only its own section's hash (`"signature": "52e9262b…"`), while `signature.json`
+carries all three so a client can poll it:
 
 ```json
 "signature": {
